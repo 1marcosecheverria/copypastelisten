@@ -9,149 +9,140 @@
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
     body {
-      margin: 0; background:#0b0b0b; color:#ddd;
-      font: 16px/1.55 -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+      margin:0; background:#0b0b0b; color:#ddd;
+      font:16px/1.6 -apple-system,system-ui,Segoe UI,Roboto,sans-serif;
     }
     header {
-      display:flex; align-items:center; gap:8px;
-      padding:12px 14px; border-bottom:1px solid #222;
-      position: sticky; top: 0; background: #0b0b0b; z-index: 1;
+      position:sticky; top:0; z-index:10;
+      display:flex; align-items:center; gap:10px;
+      padding:12px 14px; background:#0b0b0b; border-bottom:1px solid #222;
     }
-    header h1 { margin:0; font-size:16px; font-weight:700; letter-spacing:.2px; }
-    header .meta { margin-left:auto; font-size:12px; color:#aaa }
-    main { padding: 16px; }
-    pre {
-      white-space: pre-wrap; word-wrap: break-word;
-      margin: 0; padding: 0; font: inherit;
+    header h1 { margin:0; font-size:16px; font-weight:700; }
+    .meta { margin-left:auto; font-size:12px; color:#aaa }
+    main { padding: 18px 14px 40px; max-width: 46rem; margin: 0 auto; }
+    article h2 { margin: 0 0 10px; font-size: 20px; font-weight: 700; color:#fff; }
+    article p { margin: 0 0 14px; white-space: pre-wrap; }
+    nav.parts {
+      position: sticky; bottom: 0; display:flex; gap:8px; align-items:center; justify-content:center;
+      padding:10px; background:#0b0b0b; border-top:1px solid #222;
     }
-    .hint { color:#999; font-size:14px; margin-top:8px }
-    .row { display:flex; flex-wrap:wrap; gap:8px; margin-left:auto }
-    button,a.btn {
-      border:1px solid #333; background:#171717; color:#e6e6e6;
-      padding:8px 10px; border-radius:10px; font-size:13px; text-decoration:none;
-    }
-    button:active, a.btn:active { transform: translateY(1px); opacity:.9 }
-    .muted { color:#8aaecf }
+    .btn { border:1px solid #333; background:#171717; color:#e6e6e6; padding:8px 10px; border-radius:10px; font-size:13px; text-decoration:none; }
+    .btn:active { transform: translateY(1px); opacity:.9 }
+    .pill { padding:6px 10px; border-radius:20px; border:1px solid #333; }
   </style>
-  <!-- Optional compression (safe CDN). If unavailable, page still works with plain text. -->
+  <!-- Optional compression support; page works without it for plain payloads -->
   <script defer src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
 </head>
 <body>
   <header>
-    <h1>CopyPasteListen Viewer</h1>
-    <span class="meta" id="len">0 chars</span>
-    <div class="row">
-      <button id="copy">Copy text</button>
-      <button id="clear">Clear</button>
-      <a id="raw" class="btn" href="#" target="_blank" rel="noopener">Open raw</a>
-    </div>
+    <h1>CopyPasteListen</h1>
+    <span class="meta" id="meta">0 chars</span>
   </header>
 
   <main>
-    <pre id="out">(loading… if this takes more than a blink, your phone fell asleep)</pre>
-    <div class="hint">
-      Tip: In Safari, use <span class="muted">AA ▸ Listen to Page</span> (or two‑finger swipe down).
-    </div>
+    <article aria-label="Article">
+      <h2 id="title"></h2>
+      <div id="content"></div>
+    </article>
+
+    <nav class="parts" id="parts" hidden>
+      <a class="btn" id="prev" href="#">◀︎ Prev</a>
+      <span class="pill" id="where">Part 1/1</span>
+      <a class="btn" id="next" href="#">Next ▶︎</a>
+    </nav>
   </main>
 
   <script>
-    // Reads text from the URL fragment (#...) using either:
-    // 1) LZString.decompressFromEncodedURIComponent(payload)  OR
-    // 2) decodeURIComponent(payload)
-    // Supported formats:
-    //   https://.../index.html#<plain-encoded-text>
-    //   https://.../index.html#lz:<compressed>
-    //   https://.../index.html#title=<t>&text=<payload>  (payload can be lz:... or plain)
-    (function () {
-      const out = document.getElementById('out');
-      const lenEl = document.getElementById('len');
-      const rawLink = document.getElementById('raw');
-      const copyBtn = document.getElementById('copy');
-      const clearBtn = document.getElementById('clear');
+  (function () {
+    // Query params control behavior:
+    //   ?chunk=0|1 (default 0)   -> whether to split into parts
+    //   ?p=1                     -> which part to show (1-based)
+    //   ?chunkSize=12000         -> max chars per part (when chunk=1)
+    const qs = new URLSearchParams(location.search);
+    const chunkEnabled = (qs.get('chunk') || '0') === '1';
+    const partParam    = Math.max(1, parseInt(qs.get('p') || '1', 10) || 1);
+    const maxChars     = Math.max(2000, parseInt(qs.get('chunkSize') || '12000', 10) || 12000);
 
-      function parseHash() {
-        const hash = location.hash.startsWith('#') ? location.hash.slice(1) : '';
-        if (!hash) return { title: '', text: '' };
+    const titleEl = document.getElementById('title');
+    const contentEl = document.getElementById('content');
+    const metaEl = document.getElementById('meta');
+    const partsNav = document.getElementById('parts');
+    const whereEl = document.getElementById('where');
+    const prevEl = document.getElementById('prev');
+    const nextEl = document.getElementById('next');
 
-        // Support key=value&key=value form too
-        if (hash.includes('=') && hash.includes('&')) {
-          const params = new URLSearchParams(hash);
-          const title = decodeURIComponent(params.get('title') || '');
-          let payload = params.get('text') || '';
-          let text = decodePayload(payload);
-          return { title, text };
+    function decodePayload(payload) {
+      try {
+        if (payload.startsWith('lz:') && window.LZString) {
+          return LZString.decompressFromEncodedURIComponent(payload.slice(3)) || '';
         }
+        return decodeURIComponent(payload);
+      } catch { return payload; }
+    }
 
-        // Otherwise treat whole hash as payload
-        return { title: '', text: decodePayload(hash) };
+    function parseHash() {
+      const hash = location.hash.startsWith('#') ? location.hash.slice(1) : '';
+      if (!hash) return { title:'', text:'' };
+      if (hash.includes('=') && hash.includes('&')) {
+        const p = new URLSearchParams(hash);
+        const title = decodeURIComponent(p.get('title') || '');
+        const raw = p.get('text') || '';
+        return { title, text: decodePayload(raw) };
       }
+      return { title:'', text: decodePayload(hash) };
+    }
 
-      function decodePayload(payload) {
-        try {
-          if (payload.startsWith('lz:')) {
-            const p = payload.slice(3);
-            if (window.LZString) {
-              return LZString.decompressFromEncodedURIComponent(p) || '';
-            }
-            // If LZString not loaded yet, try later
-            deferDecode(p);
-            return '';
-          }
-          return decodeURIComponent(payload);
-        } catch {
-          // As a last resort, return raw payload
-          return payload;
-        }
+    function splitIntoParagraphs(text) {
+      return text.replace(/\r\n/g,'\n').split(/\n\s*\n+/g).map(s=>s.trim()).filter(Boolean);
+    }
+
+    function chunkParagraphs(paras) {
+      if (!chunkEnabled) return [paras];
+      const out = []; let cur=[]; let len=0;
+      for (const p of paras) {
+        const add = p.length + 2;
+        if (len + add > maxChars && cur.length) { out.push(cur); cur=[]; len=0; }
+        cur.push(p); len += add;
       }
+      if (cur.length) out.push(cur);
+      return out.length ? out : [paras];
+    }
 
-      function deferDecode(p) {
-        const tick = () => {
-          if (window.LZString) {
-            const txt = LZString.decompressFromEncodedURIComponent(p) || '';
-            render(txt);
-          } else {
-            setTimeout(tick, 30);
-          }
-        };
-        tick();
-      }
-
-      function render(text) {
-        out.textContent = text || '(no text)';
-        lenEl.textContent = (text || '').length + ' chars';
-        // Build a "raw data:" link for sharing the same content (small payloads only)
-        try {
-          const data = 'data:text/plain;charset=utf-8,' + encodeURIComponent(text || '');
-          rawLink.href = data;
-        } catch { rawLink.removeAttribute('href'); }
-        window.scrollTo(0,0); // keep start visible for Speak Screen
-      }
-
-      // Wire buttons
-      copyBtn.onclick = async () => {
-        try {
-          await navigator.clipboard.writeText(out.textContent || '');
-          copyBtn.textContent = 'Copied!';
-          setTimeout(() => (copyBtn.textContent = 'Copy text'), 1000);
-        } catch { alert('Clipboard blocked by browser'); }
-      };
-      clearBtn.onclick = () => {
-        out.textContent = '(cleared)';
-        lenEl.textContent = '0 chars';
-        history.replaceState(null, '', location.pathname); // remove hash
-      };
-
-      // Initial load + react to changes
+    function render() {
       const { title, text } = parseHash();
-      if (title) document.title = title + ' — CopyPasteListen';
-      render(text);
+      document.title = (title || 'CopyPasteListen') + ' — Viewer';
 
-      window.addEventListener('hashchange', () => {
-        const { title, text } = parseHash();
-        if (title) document.title = title + ' — CopyPasteListen';
-        render(text);
-      }, false);
-    })();
+      const paras = splitIntoParagraphs(text);
+      const parts = chunkParagraphs(paras);
+      const total = parts.length;
+      const idx = Math.min(Math.max(1, partParam), total) - 1;
+
+      titleEl.textContent = title || '';
+      contentEl.innerHTML = '';
+      for (const p of parts[idx]) {
+        const el = document.createElement('p');
+        el.textContent = p;
+        contentEl.appendChild(el);
+      }
+
+      metaEl.textContent = `${(text||'').length} chars • ${paras.length} paragraphs${chunkEnabled ? ' • chunked' : ''}`;
+      whereEl.textContent = `Part ${idx+1}/${total}`;
+      partsNav.hidden = total <= 1; // no nav if single part
+
+      // Nav links preserve the same hash (payload) and toggle ?p=
+      const base = location.pathname + `?chunk=${chunkEnabled?1:0}&chunkSize=${maxChars}`;
+      const mk = (n)=> `${base}&p=${n}${location.hash}`;
+      prevEl.href = idx>0 ? mk(idx) : '#';
+      nextEl.href = idx+1<total ? mk(idx+2) : '#';
+      prevEl.onclick = (e)=>{ if(idx===0) return; e.preventDefault(); location.href = mk(idx); };
+      nextEl.onclick = (e)=>{ if(idx+1>=total) return; e.preventDefault(); location.href = mk(idx+2); };
+
+      window.scrollTo(0,0); // helps Siri/Reader start at the top
+    }
+
+    render();
+    window.addEventListener('hashchange', ()=> location.reload());
+  })();
   </script>
 </body>
 </html>

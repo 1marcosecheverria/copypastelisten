@@ -1,11 +1,157 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>CopyPasteListen</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CopyPasteListen Viewer</title>
+  <meta name="color-scheme" content="dark light" />
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background:#0b0b0b; color:#ddd;
+      font: 16px/1.55 -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+    }
+    header {
+      display:flex; align-items:center; gap:8px;
+      padding:12px 14px; border-bottom:1px solid #222;
+      position: sticky; top: 0; background: #0b0b0b; z-index: 1;
+    }
+    header h1 { margin:0; font-size:16px; font-weight:700; letter-spacing:.2px; }
+    header .meta { margin-left:auto; font-size:12px; color:#aaa }
+    main { padding: 16px; }
+    pre {
+      white-space: pre-wrap; word-wrap: break-word;
+      margin: 0; padding: 0; font: inherit;
+    }
+    .hint { color:#999; font-size:14px; margin-top:8px }
+    .row { display:flex; flex-wrap:wrap; gap:8px; margin-left:auto }
+    button,a.btn {
+      border:1px solid #333; background:#171717; color:#e6e6e6;
+      padding:8px 10px; border-radius:10px; font-size:13px; text-decoration:none;
+    }
+    button:active, a.btn:active { transform: translateY(1px); opacity:.9 }
+    .muted { color:#8aaecf }
+  </style>
+  <!-- Optional compression (safe CDN). If unavailable, page still works with plain text. -->
+  <script defer src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
 </head>
 <body>
-  <h1>Hello from CopyPasteListen</h1>
-  <p>This is your test page for Safari.</p>
+  <header>
+    <h1>CopyPasteListen Viewer</h1>
+    <span class="meta" id="len">0 chars</span>
+    <div class="row">
+      <button id="copy">Copy text</button>
+      <button id="clear">Clear</button>
+      <a id="raw" class="btn" href="#" target="_blank" rel="noopener">Open raw</a>
+    </div>
+  </header>
+
+  <main>
+    <pre id="out">(loading… if this takes more than a blink, your phone fell asleep)</pre>
+    <div class="hint">
+      Tip: In Safari, use <span class="muted">AA ▸ Listen to Page</span> (or two‑finger swipe down).
+    </div>
+  </main>
+
+  <script>
+    // Reads text from the URL fragment (#...) using either:
+    // 1) LZString.decompressFromEncodedURIComponent(payload)  OR
+    // 2) decodeURIComponent(payload)
+    // Supported formats:
+    //   https://.../index.html#<plain-encoded-text>
+    //   https://.../index.html#lz:<compressed>
+    //   https://.../index.html#title=<t>&text=<payload>  (payload can be lz:... or plain)
+    (function () {
+      const out = document.getElementById('out');
+      const lenEl = document.getElementById('len');
+      const rawLink = document.getElementById('raw');
+      const copyBtn = document.getElementById('copy');
+      const clearBtn = document.getElementById('clear');
+
+      function parseHash() {
+        const hash = location.hash.startsWith('#') ? location.hash.slice(1) : '';
+        if (!hash) return { title: '', text: '' };
+
+        // Support key=value&key=value form too
+        if (hash.includes('=') && hash.includes('&')) {
+          const params = new URLSearchParams(hash);
+          const title = decodeURIComponent(params.get('title') || '');
+          let payload = params.get('text') || '';
+          let text = decodePayload(payload);
+          return { title, text };
+        }
+
+        // Otherwise treat whole hash as payload
+        return { title: '', text: decodePayload(hash) };
+      }
+
+      function decodePayload(payload) {
+        try {
+          if (payload.startsWith('lz:')) {
+            const p = payload.slice(3);
+            if (window.LZString) {
+              return LZString.decompressFromEncodedURIComponent(p) || '';
+            }
+            // If LZString not loaded yet, try later
+            deferDecode(p);
+            return '';
+          }
+          return decodeURIComponent(payload);
+        } catch {
+          // As a last resort, return raw payload
+          return payload;
+        }
+      }
+
+      function deferDecode(p) {
+        const tick = () => {
+          if (window.LZString) {
+            const txt = LZString.decompressFromEncodedURIComponent(p) || '';
+            render(txt);
+          } else {
+            setTimeout(tick, 30);
+          }
+        };
+        tick();
+      }
+
+      function render(text) {
+        out.textContent = text || '(no text)';
+        lenEl.textContent = (text || '').length + ' chars';
+        // Build a "raw data:" link for sharing the same content (small payloads only)
+        try {
+          const data = 'data:text/plain;charset=utf-8,' + encodeURIComponent(text || '');
+          rawLink.href = data;
+        } catch { rawLink.removeAttribute('href'); }
+        window.scrollTo(0,0); // keep start visible for Speak Screen
+      }
+
+      // Wire buttons
+      copyBtn.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(out.textContent || '');
+          copyBtn.textContent = 'Copied!';
+          setTimeout(() => (copyBtn.textContent = 'Copy text'), 1000);
+        } catch { alert('Clipboard blocked by browser'); }
+      };
+      clearBtn.onclick = () => {
+        out.textContent = '(cleared)';
+        lenEl.textContent = '0 chars';
+        history.replaceState(null, '', location.pathname); // remove hash
+      };
+
+      // Initial load + react to changes
+      const { title, text } = parseHash();
+      if (title) document.title = title + ' — CopyPasteListen';
+      render(text);
+
+      window.addEventListener('hashchange', () => {
+        const { title, text } = parseHash();
+        if (title) document.title = title + ' — CopyPasteListen';
+        render(text);
+      }, false);
+    })();
+  </script>
 </body>
 </html>
